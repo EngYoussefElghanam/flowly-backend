@@ -10,5 +10,7 @@ router.post('/orders', guard, orderController.create);
 router.get('/orders', guard, orderController.getOrders)
 //patch /orders
 router.patch('/orders/:id', guard, orderController.updateStatus)
+//get /order details
+router.get('/orders/:id', isAuth, orderController.getOrderDetails);
 
 module.exports = router;
