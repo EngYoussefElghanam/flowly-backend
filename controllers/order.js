@@ -4,6 +4,7 @@ const OrderItem = require("../models/order_items");
 const Customer = require("../models/customer");
 const db = require("../util/db")
 const User = require("../models/user");
+const { Model } = require("sequelize");
 
 const createOrder = async (req, res, next) => {
     const t = await db.transaction()//starting our transaction bucket
@@ -118,6 +119,24 @@ const getOrders = async (req, res, next) => {
     }
 }
 
+const getOrderDetails = async (req, res, next) => {
+    const orderId = req.params.id
+    const user = await User.findByPk(req.userId);
+    try {
+        const order = await Order.findOne({
+            where: { id: orderId, userId: user.ownerId },
+            include: [{ model: Product }]
+        })
+        if (!order) {
+            return res.status(404).json({ message: 'Order not found' });
+        }
+        res.status(200).json(order)
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ message: `Server Error : $error` })
+    }
+}
+
 const updateStatus = async (req, res, next) => {
     try {
         const orderId = req.params.id
@@ -146,4 +165,4 @@ const updateStatus = async (req, res, next) => {
     }
 }
 
-module.exports = { create: createOrder, getOrders, updateStatus };
+module.exports = { create: createOrder, getOrders, updateStatus, getOrderDetails };
