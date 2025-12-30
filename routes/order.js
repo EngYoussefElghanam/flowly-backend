@@ -11,6 +11,6 @@ router.get('/orders', guard, orderController.getOrders)
 //patch /orders
 router.patch('/orders/:id', guard, orderController.updateStatus)
 //get /order details
-router.get('/orders/:id', isAuth, orderController.getOrderDetails);
+router.get('/orders/:id', guard, orderController.getOrderDetails);
 
 module.exports = router;
