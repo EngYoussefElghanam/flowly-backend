@@ -1,0 +1,48 @@
+const Product = require("../models/products")
+const User = require("../models/user")
+const createProduct = async (req, res, next) => {
+    try {
+        const name = req.body.name
+        const costPrice = req.body.costPrice
+        const sellPrice = req.body.sellPrice
+        const stock = req.body.stockQuantity
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" })
+        }
+        const targetId = user.ownerId
+        const result = await Product.create({
+            name: name,
+            costPrice: costPrice,
+            sellPrice: sellPrice,
+            userId: targetId,
+            stockQuantity: stock,
+        })
+        res.status(201).json({
+            message: 'Product Created Successfully!',
+            product: result
+        })
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({
+            message: 'Creating product failed.',
+            error: error
+        });
+    }
+}
+const getProducts = async (req, res, next) => {
+    try {
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(404).json({ message: "User not found" })
+        }
+        const targetId = user.ownerId
+        const products = await Product.findAll({ where: { userId: targetId } })
+        res.status(200).json({ data: products })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ message: `Server Error fetching data ${error}` })
+    }
+}
+
+module.exports = { create: createProduct, get: getProducts }
