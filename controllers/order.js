@@ -121,8 +121,8 @@ const getOrders = async (req, res, next) => {
 
 const getOrderDetails = async (req, res, next) => {
     const orderId = req.params.id
-    const user = await User.findByPk(req.userId);
     try {
+        const user = await User.findByPk(req.userId);
         const order = await Order.findOne({
             where: { id: orderId, userId: user.ownerId },
             include: [{ model: Product }]
@@ -133,7 +133,7 @@ const getOrderDetails = async (req, res, next) => {
         res.status(200).json(order)
     } catch (error) {
         console.log(error)
-        res.status(500).json({ message: `Server Error : $error` })
+        res.status(500).json({ message: `Server Error : ${error}` })
     }
 }
 
