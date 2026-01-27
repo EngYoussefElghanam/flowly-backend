@@ -50,10 +50,23 @@ exports.signup = async (req, res, next) => {
             await user.save();
         }
 
+        const token = jwt.sign(
+            {
+                email: user.email,
+                userId: user.id,
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
         res.status(201).json({
             message: "User Created Successfully",
-            userId: user.id
-        })
+            token: token,
+            userId: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role
+        });
 
     } catch (error) {
         console.log(error)
