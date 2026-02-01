@@ -81,10 +81,10 @@ exports.getCustomerDetails = async (req, res, next) => {
 exports.getCustomerStats = async (req, res, next) => {
     const customerId = req.params.id
     try {
-        const orders = await Order.findAll({ where: { customerId: customerId }, include: [{ model: OrderItem, include: [{ model: Product }] }] })
+        const orders = await Order.findAll({ where: { customerId: customerId, status: "DELIVERED" }, include: [{ model: OrderItem, include: [{ model: Product }] }] })
         if (!orders || orders.length == 0) {
             return res.status(200).json({
-                totalSpent: 0,
+                totalSpent: "0.00",
                 totalOrders: 0,
                 favoriteItem: "N/A"
             })
@@ -93,7 +93,7 @@ exports.getCustomerStats = async (req, res, next) => {
         const totalOrders = orders.length
         const productFreq = {}
         orders.forEach(order => {
-            totalSpent += order.totalAmount
+            totalSpent += parseFloat(order.totalAmount)
             order.orderItems.forEach(item => {
                 productName = item.product ? item.product.name : "Unknown"
                 if (productFreq[productName]) {
