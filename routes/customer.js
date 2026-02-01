@@ -6,5 +6,6 @@ router.use(guard)
 router.get('/customers', customerController.getCustomers)
 router.post('/customers', customerController.createCustomer)
 router.get('/customers/:id', customerController.getCustomerDetails)
+router.get('/customers/:id/stats', customerController.getCustomerStats)
 
 module.exports = router

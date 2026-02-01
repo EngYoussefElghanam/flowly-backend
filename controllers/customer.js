@@ -1,6 +1,8 @@
 const Customer = require("../models/customer");
 const Order = require("../models/orders");
-const User = require("../models/user"); // Import User to find the Boss
+const User = require("../models/user");
+const OrderItem = require("../models/order_items")
+const Product = require("../models/products")
 
 exports.getCustomers = async (req, res, next) => {
     try {
@@ -73,5 +75,49 @@ exports.getCustomerDetails = async (req, res, next) => {
         res.status(200).json({ data: customer });
     } catch (err) {
         res.status(500).json({ message: "Server Error" });
+    }
+}
+
+exports.getCustomerStats = async (req, res, next) => {
+    const customerId = req.params.id
+    try {
+        const orders = await Order.findAll({ where: { customerId: customerId }, include: [{ model: OrderItem, include: [{ model: Product }] }] })
+        if (!orders || orders.length == 0) {
+            return res.status(200).json({
+                totalSpent: 0,
+                totalOrders: 0,
+                favoriteItem: "N/A"
+            })
+        }
+        let totalSpent = 0
+        const totalOrders = orders.length
+        const productFreq = {}
+        orders.forEach(order => {
+            totalSpent += order.totalAmount
+            order.orderItems.forEach(item => {
+                productName = item.product ? item.product.name : "Unknown"
+                if (productFreq[productName]) {
+                    productFreq[productName] += item.quantity
+                } else {
+                    productFreq[productName] = item.quantity
+                }
+            })
+        })
+        let favoriteItem = "N/A"
+        let maxCount = 0
+        for (const [product, count] of Object.entries(productFreq)) {
+            if (count > maxCount) {
+                maxCount = count;
+                favoriteItem = product;
+            }
+        }
+        res.status(200).json({
+            totalSpent: totalSpent.toFixed(2),
+            totalOrders: totalOrders,
+            favoriteItem: favoriteItem
+        })
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({ message: "Failed to fetch stats" });
     }
 }

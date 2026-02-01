@@ -55,7 +55,10 @@ Order.belongsTo(Customer)
 Order.belongsToMany(Product, { through: OrderItem })
 Product.belongsToMany(Order, { through: OrderItem })
 
-
+Order.hasMany(OrderItem);
+OrderItem.belongsTo(Order);
+OrderItem.belongsTo(Product);
+Product.hasMany(OrderItem);
 
 // 3. SYNC DATABASE & START SERVER
 // Note: Use { force: true } inside sync() ONLY if you need to reset the DB completely.
