@@ -78,20 +78,34 @@ exports.signup = async (req, res, next) => {
 
 exports.login = async (req, res, next) => {
     try {
-        const email = req.body.email
-        const password = req.body.password
-        const user = await User.findOne({ where: { email: email } })
-        const rightPass = await bcrypt.compare(password, user.password)
-        // Safer approach
-        if (!user || !rightPass) { // Check both, or check sequentially but return same error
-            // Don't tell them which one failed!
+        const email = req.body.email;
+        const password = req.body.password;
+
+        // 1. Try to find the user
+        const user = await User.findOne({ where: { email: email } });
+
+        // 2. SAFETY CHECK: If user is null, STOP here.
+        // We return the generic message so hackers don't know the email is wrong.
+        if (!user) {
             return res.status(401).json({ message: "Invalid email or password" });
         }
+
+        // 3. Now it is safe to check the password (user is definitely not null)
+        const rightPass = await bcrypt.compare(password, user.password);
+
+        // 4. Password Check
+        if (!rightPass) {
+            // We return the EXACT SAME message. Confusing the hacker! 🕵️‍♂️
+            return res.status(401).json({ message: "Invalid email or password" });
+        }
+
+        // 5. Success! Generate Token
         const token = jwt.sign(
             { userId: user.id, email: user.email },
-            process.env.JWT_SECRET,//in production should go to env
+            process.env.JWT_SECRET,
             { expiresIn: "30d" }
-        )
+        );
+
         res.status(200).json({
             token: token,
             userId: user.id.toString(),
@@ -99,9 +113,10 @@ exports.login = async (req, res, next) => {
             email: user.email,
             role: user.role,
             ownerId: user.ownerId
-        })
+        });
+
     } catch (error) {
         console.log(error);
         res.status(500).json({ error: error });
     }
-}
+};

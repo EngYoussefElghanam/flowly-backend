@@ -35,6 +35,16 @@ const user = db.define('user', {
     ownerId: {
         type: sequelize.INTEGER,
         allowNull: true,
+    },
+    inactiveThreshold: {
+        type: sequelize.INTEGER,
+        defaultValue: 30,
+        allowNull: false,
+    },
+    vipOrderThreshold: {
+        type: sequelize.INTEGER,
+        defaultValue: 5,
+        allowNull: false
     }
 })
 

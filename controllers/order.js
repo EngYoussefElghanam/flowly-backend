@@ -4,10 +4,12 @@ const OrderItem = require("../models/order_items");
 const Customer = require("../models/customer");
 const db = require("../util/db")
 const User = require("../models/user");
-const { Model } = require("sequelize");
+const sequelize = require("sequelize");
 
 const createOrder = async (req, res, next) => {
-    const t = await db.transaction()//starting our transaction bucket
+    // 1. Start the Transaction Bucket 🛒
+    const t = await db.transaction();
+
     try {
         const customerId = req.body.customerId;
         const productsFromApp = req.body.products;
@@ -15,10 +17,10 @@ const createOrder = async (req, res, next) => {
         // 2. 🔍 FIND THE BOSS
         const user = await User.findByPk(req.userId);
         if (!user) {
-            await t.rollback() //return everything
+            await t.rollback();
             return res.status(404).json({ message: "User not found" });
         }
-        const companyId = user.ownerId; // All orders go to this ID
+        const companyId = user.ownerId;
 
         let total_amount = 0;
         let total_cost = 0;
@@ -26,29 +28,29 @@ const createOrder = async (req, res, next) => {
 
         // 3. Process Items & Deduct Stock
         for (const item of productsFromApp) {
-            const product = await Product.findByPk(item.id, { transaction: t });//add the product to the bucket
+            // Include transaction here
+            const product = await Product.findByPk(item.id, { transaction: t });
+
             if (!product) {
-                await t.rollback()//return all if fails
+                await t.rollback();
                 return res.status(404).json({ message: `Product ID ${item.id} not found` });
             }
 
-            // Security Check: Ensure product belongs to this company
             if (product.userId !== companyId) {
-                await t.rollback()//return if it trying to sell from another company
+                await t.rollback();
                 return res.status(403).json({ message: "You cannot sell products from another company!" });
             }
 
-            // Stock Check
             if (product.stockQuantity < item.quantity) {
-                await t.rollback()//return all if one product fails
+                await t.rollback();
                 return res.status(400).json({
                     message: `Not enough stock for ${product.name}. Available: ${product.stockQuantity}`
                 });
             }
 
-            // Deduct & Save
+            // Update Stock
             product.stockQuantity -= item.quantity;
-            await product.save({ transaction: t });//save it and tell the bucket
+            await product.save({ transaction: t });
 
             const current_price = product.sellPrice;
             const current_cost = product.costPrice;
@@ -66,7 +68,7 @@ const createOrder = async (req, res, next) => {
 
         const total_profit = total_amount - total_cost;
 
-        // 4. Create Order linked to COMPANY (Owner), not just the Employee
+        // 4. Create Order
         const order = await Order.create({
             totalAmount: total_amount,
             status: 'NEW',
@@ -74,9 +76,10 @@ const createOrder = async (req, res, next) => {
             courierName: req.body.courierName || '',
             notes: req.body.notes || '',
             customerId: customerId,
-            userId: companyId, // <--- THE FIX
-        }, { transaction: t });//give what in the bucket
+            userId: companyId,
+        }, { transaction: t });
 
+        // 6. Create Order Items
         for (const itemData of orderItemsData) {
             await OrderItem.create({
                 quantity: itemData.quantity,
@@ -84,9 +87,53 @@ const createOrder = async (req, res, next) => {
                 costAtPurchase: itemData.costAtPurchase,
                 orderId: order.id,
                 productId: itemData.productId
-            }, { transaction: t });//
+            }, { transaction: t });
         }
-        await t.commit()
+        if (customerId) {
+            const customer = await Customer.findByPk(customerId, { transaction: t });
+            if (customer) {
+                // A. Update Basic Metrics
+                customer.lastOrderDate = new Date();
+                customer.totalOrders += 1;
+                customer.totalSpent += total_amount;
+
+                // B. 🧠 Calculate Favorite Item (The "Winner" Query)
+                // We ask the DB: "Sum up quantities for this user, group by product, give me #1"
+                // This counts the items we JUST added because we are inside transaction 't'
+                const topProduct = await OrderItem.findAll({
+                    attributes: [
+                        'productId',
+                        [sequelize.fn('SUM', sequelize.col('quantity')), 'totalQty']
+                    ],
+                    include: [{
+                        model: Order,
+                        where: { customerId: customerId }, // Filter by this customer
+                        attributes: [] // Don't fetch order data, just use for filtering
+                    }],
+                    group: ['productId', 'orderItem.productId'], // Grouping rules
+                    order: [[sequelize.literal('"totalQty"'), 'DESC']], // Highest Quantity on top
+                    limit: 1, // Only need the winner
+                    transaction: t
+                });
+
+                // C. If we found a winner, get its name and update
+                if (topProduct.length > 0) {
+                    const winnerId = topProduct[0].productId;
+                    const productDetails = await Product.findByPk(winnerId, { transaction: t });
+
+                    if (productDetails) {
+                        customer.favoriteItem = productDetails.name;
+                    }
+                }
+
+                // D. Save EVERYTHING (Stats + Favorite) in one DB write 💾
+                await customer.save({ transaction: t });
+            }
+        }
+
+        // 7. Commit everything if we got here safely
+        await t.commit();
+
         res.status(201).json({
             message: 'Order Created Successfully!',
             orderId: order.id,
@@ -95,11 +142,12 @@ const createOrder = async (req, res, next) => {
         });
 
     } catch (error) {
+        // If ANYTHING above fails, undo it all
         await t.rollback();
         console.log(error);
         res.status(500).json({ message: 'Creating order failed.', error: error });
     }
-}
+};
 
 const getOrders = async (req, res, next) => {
     try {

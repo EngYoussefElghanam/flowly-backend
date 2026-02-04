@@ -12,6 +12,7 @@ const orderRoutes = require('./routes/order');
 const authRoutes = require("./routes/auth")
 const customerRoutes = require("./routes/customer")
 const dashboardRoutes = require("./routes/dashboard")
+const marketingRoutes = require('./routes/marketing');
 
 // 2. Import All Your Models
 const User = require('./models/user');
@@ -19,6 +20,7 @@ const Product = require('./models/products');
 const Customer = require('./models/customer');
 const Order = require('./models/orders');
 const OrderItem = require('./models/order_items');
+const marketingOpportunities = require('./models/marketingOpportunity');
 
 const app = express();
 
@@ -30,6 +32,7 @@ app.use('/api', orderRoutes);
 app.use('/api', authRoutes)
 app.use('/api', customerRoutes)
 app.use('/api', dashboardRoutes)
+app.use('/marketing', marketingRoutes);
 // Test Route
 app.get('/', (req, res) => {
     res.json({ message: 'Seller App Backend is Running!' });
@@ -59,11 +62,13 @@ Order.hasMany(OrderItem);
 OrderItem.belongsTo(Order);
 OrderItem.belongsTo(Product);
 Product.hasMany(OrderItem);
-
+Customer.hasMany(marketingOpportunities)
+marketingOpportunities.belongsTo(Customer)
+User.hasMany(marketingOpportunities);
+marketingOpportunities.belongsTo(User);
 // 3. SYNC DATABASE & START SERVER
-// Note: Use { force: true } inside sync() ONLY if you need to reset the DB completely.
 sequelize
-    .sync()
+    .sync({ alter: true })
     .then(result => {
         console.log("✅ Database Connected & Tables Linked!");
         app.listen(3000, '0.0.0.0', () => {
