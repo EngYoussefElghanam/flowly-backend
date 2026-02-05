@@ -23,6 +23,7 @@ const user = db.define('user', {
     },
     phone: {
         type: sequelize.STRING,
+        allowNull: true,
     },
     defaultCourier: {
         type: sequelize.STRING

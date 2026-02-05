@@ -1,80 +1,136 @@
 const bcrypt = require("bcryptjs")
 const jwt = require("jsonwebtoken")
 const User = require("../models/user")
+const PendingUser = require('../models/pending_user')
+const emailer = require('../util/email')
+const dns = require('dns').promises
 
-exports.signup = async (req, res, next) => {
+const isValidEmailDomain = async (email) => {
+    try {
+        const domain = email.split('@')[1];
+        if (!domain) return false;
+
+        // Ask DNS: "Give me the Mail Exchange (MX) records for this domain"
+        const addresses = await dns.resolveMx(domain);
+
+        // If we get an array and it has at least one server, it's valid!
+        return addresses && addresses.length > 0;
+    } catch (error) {
+        // If domain doesn't exist or has no mail servers, this error triggers
+        return false;
+    }
+};
+
+exports.initiateSignup = async (req, res, next) => {
     try {
         const name = req.body.name
         const email = req.body.email
-        const password = req.body.password
         const phone = req.body.phone
-
-        // 1. Determine Role
-        let role = "EMPLOYEE"
-        if (req.body.role) {
-            role = req.body.role
+        const role = req.body.role
+        const password = req.body.password
+        const ownerId = req.body.ownerId
+        // A. basic Regex (Format check)
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            return res.status(422).json({ message: "Invalid email format." });
         }
 
-        // 2. 🛡️ GUARD: Validate Employee HAS an Owner
-        // We do this BEFORE hashing passwords or talking to DB
-        if (role === 'EMPLOYEE' && !req.body.ownerId) {
-            return res.status(400).json({
-                message: "Cannot create Employee without an Owner ID."
-            });
+        // B. DNS Check (Reality check) 🛡️
+        // This stops 'test@gmil.com', 'user@fake-domain-123.com', etc.
+        const isDomainReal = await isValidEmailDomain(email);
+        if (!isDomainReal) {
+            return res.status(422).json({ message: "Invalid email domain. That domain cannot receive emails." });
         }
 
-        // 3. Check if User Exists
-        const userExist = await User.findOne({ where: { email: email } })
-        if (userExist) {
-            return res.status(409).json({ message: "Email already exists" })
+        const existingUser = await User.findOne({ where: { email: email } });
+        if (existingUser) {
+            return res.status(409).json({ message: "User already exists." });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 12)
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        const hashedCode = await bcrypt.hash(code, 12);
+        const hashedPassword = await bcrypt.hash(password, 12);
 
-        // 4. Create the User
-        // If it's an employee, we insert ownerId RIGHT NOW.
-        let user = await User.create({
-            name: name,
-            email: email,
+        await PendingUser.destroy({ where: { email: email } });
+
+        await PendingUser.create({
+            name,
+            email,
             password: hashedPassword,
-            phone: phone,
-            role: role,
-            // If employee, use the ID from body. If owner, this is undefined (null) for now.
-            ownerId: role === 'EMPLOYEE' ? req.body.ownerId : null
-        })
+            phone: (phone && phone.trim().length > 0) ? phone : null,
+            role: role || 'OWNER',
+            ownerId: ownerId || null,
+            verificationCode: hashedCode,
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+        });
 
-        // 5. Handle Owner Self-Reference
-        // Only if it's an OWNER, we update the ownerId to match their new ID
-        if (role === 'OWNER') {
-            user.ownerId = user.id;
-            await user.save();
+        await emailer.sendVerificationEmail(email, code);
+
+        res.status(200).json({ message: "Verification code sent to email." });
+
+    } catch (err) {
+        if (!err.statusCode) err.statusCode = 500;
+        next(err);
+    }
+};
+
+exports.verifySignup = async (req, res, next) => {
+    try {
+        const email = req.body.email
+        const code = req.body.code
+
+        // A. Find Pending Record
+        const pendingUser = await PendingUser.findOne({ where: { email: email } });
+
+        if (!pendingUser) {
+            return res.status(404).json({ message: "Request expired or email not found." });
         }
 
+        // B. Check Expiration
+        if (new Date() > pendingUser.expiresAt) {
+            await pendingUser.destroy(); // Cleanup
+            return res.status(401).json({ message: "Code expired. Please signup again." });
+        }
+
+        // C. Check Code
+        const isEqual = await bcrypt.compare(code, pendingUser.verificationCode);
+        if (!isEqual) {
+            return res.status(401).json({ message: "Invalid verification code." });
+        }
+
+        // D. MOVE TO REAL TABLE (The "Commit")
+        const newUser = await User.create({
+            name: pendingUser.name,
+            email: pendingUser.email,
+            password: pendingUser.password, // Already hashed
+            phone: pendingUser.phone,
+            role: pendingUser.role,
+            ownerId: pendingUser.ownerId
+        });
+
+        // E. Cleanup Pending
+        await pendingUser.destroy();
+
+        // F. Generate Token (Auto Login)
         const token = jwt.sign(
-            {
-                email: user.email,
-                userId: user.id,
-            },
+            { email: newUser.email, userId: newUser.id },
             process.env.JWT_SECRET,
             { expiresIn: '30d' }
         );
 
         res.status(201).json({
-            message: "User Created Successfully",
             token: token,
-            userId: user.id,
-            name: user.name,
-            email: user.email,
-            role: user.role
+            userId: newUser.id.toString(),
+            name: newUser.name,
+            email: newUser.email,
+            role: newUser.role
         });
 
-    } catch (error) {
-        console.log(error)
-        return res.status(500).json({
-            message: `Server side failure ${error}`
-        })
+    } catch (err) {
+        if (!err.statusCode) err.statusCode = 500;
+        next(err);
     }
-}
+};
 
 exports.login = async (req, res, next) => {
     try {
