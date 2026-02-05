@@ -13,6 +13,7 @@ const authRoutes = require("./routes/auth")
 const customerRoutes = require("./routes/customer")
 const dashboardRoutes = require("./routes/dashboard")
 const marketingRoutes = require('./routes/marketing');
+const settingsRoutes = require('./routes/settings')
 
 // 2. Import All Your Models
 const User = require('./models/user');
@@ -33,6 +34,7 @@ app.use('/api', authRoutes)
 app.use('/api', customerRoutes)
 app.use('/api', dashboardRoutes)
 app.use('/marketing', marketingRoutes);
+app.use('/api', settingsRoutes)
 // Test Route
 app.get('/', (req, res) => {
     res.json({ message: 'Seller App Backend is Running!' });

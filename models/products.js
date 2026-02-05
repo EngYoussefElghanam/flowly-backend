@@ -23,6 +23,11 @@ const product = db.define("product", {
     stockQuantity: {
         type: sequelize.INTEGER,
         allowNull: false,
+    },
+    isArchived: {
+        type: sequelize.BOOLEAN,
+        defaultValue: false,
+        allowNull: false
     }
 })
 
