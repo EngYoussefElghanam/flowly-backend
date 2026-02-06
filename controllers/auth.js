@@ -6,6 +6,8 @@ const emailer = require('../util/email')
 const Product = require('../models/products')
 const Order = require('../models/orders')
 const Customer = require('../models/customer')
+const sequelize = require('../util/db')
+const MarketingOpportunity = require('../models/marketingOpportunity')
 const dns = require('dns').promises
 
 const isValidEmailDomain = async (email) => {
@@ -36,30 +38,80 @@ exports.getEmployees = async (req, res, next) => {
 }
 
 exports.deleteUser = async (req, res, next) => {
+    const t = await sequelize.transaction(); // Ensure 'sequelize' is imported/available
     try {
-        const intendedId = req.params.id
-        const user = await User.findByPk(intendedId)
-        if (!user) {
-            return res.status(404).json({ message: "User not found" })
+        const intendedId = Number(req.params.id);
+        if (!Number.isInteger(intendedId)) {
+            await t.rollback();
+            return res.status(400).json({ message: "Invalid user id" });
         }
 
-        if (user.role === 'OWNER') {
-            // If this user is an Owner, find and delete all their employees first
-            await User.destroy({ where: { ownerId: intendedId } });
-            await Product.destroy({ where: { userId: intendedId } });
-            await Customer.destroy({ where: { userId: intendedId } });
-            await Order.destroy({ where: { userId: intendedId } });
-            console.log(`🧹 Cleaned up employees for Owner ${intendedId}`);
+        const reqUser = await User.findByPk(req.userId, { transaction: t });
+        if (!reqUser) {
+            await t.rollback();
+            return res.status(401).json({ message: "Authentication failed" });
         }
 
-        await user.destroy()
-        res.status(200).json({ message: "User Deleted successfully" });
+        const targetUser = await User.findByPk(intendedId, { transaction: t });
+        if (!targetUser) {
+            await t.rollback();
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        // ---- Authorization ----
+        const isSelfDelete = targetUser.id === reqUser.id;
+
+        const isOwnerDeletingEmployee =
+            reqUser.role === "OWNER" &&
+            targetUser.role === "EMPLOYEE" &&
+            targetUser.ownerId === reqUser.id;
+
+        const isOwnerDeletingSelf =
+            reqUser.role === "OWNER" &&
+            isSelfDelete &&
+            reqUser.ownerId === null;
+
+        if (!(isOwnerDeletingEmployee || isOwnerDeletingSelf)) {
+            await t.rollback();
+            return res.status(403).json({ message: "Forbidden: You cannot perform this action." });
+        }
+
+        // ---- Deletion & Cleanup ----
+        if (targetUser.role === "OWNER") {
+            console.log(`⚠️ Deleting Business Data for Owner ${targetUser.id}...`);
+
+            // 1. Delete Staff
+            await User.destroy({ where: { ownerId: targetUser.id }, transaction: t });
+
+            // 2. Delete Inventory
+            await Product.destroy({ where: { userId: targetUser.id }, transaction: t });
+
+            // 3. Delete Customers
+            await Customer.destroy({ where: { userId: targetUser.id }, transaction: t });
+
+            // 4. Delete Orders (If your DB cascades OrderItems, this is enough)
+            await Order.destroy({ where: { userId: targetUser.id }, transaction: t });
+
+            // 5. Delete Marketing AI Data
+            // If you forget this, the delete will FAIL because these rows point to the user
+            await MarketingOpportunity.destroy({ where: { userId: targetUser.id }, transaction: t });
+        }
+
+        // Finally, delete the target (Owner or Employee)
+        await targetUser.destroy({ transaction: t });
+
+        await t.commit();
+        return res.status(200).json({ message: "User and associated data deleted successfully" });
+
     } catch (err) {
+        // Safety rollback in case transaction is still active
+        try { await t.rollback(); } catch (_) { }
+
+        console.error("Delete User Error:", err);
         if (!err.statusCode) err.statusCode = 500;
         next(err);
     }
-}
-
+};
 exports.initiateSignup = async (req, res, next) => {
     try {
         const name = req.body.name
