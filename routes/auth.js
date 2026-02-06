@@ -4,6 +4,7 @@ const router = express.Router()
 const isAuth = require('../middleware/is-auth')
 
 router.post('/signup/initiate', authController.initiateSignup)
+router.post('/signup/invite', isAuth, authController.inviteStaff)
 router.post('/signup/verify', authController.verifySignup)
 router.post('/login', authController.login)
 // GET employees (Protected by isAuth)

@@ -112,25 +112,89 @@ exports.deleteUser = async (req, res, next) => {
         next(err);
     }
 };
+// PUBLIC SIGNUP: Strictly for New Owners
 exports.initiateSignup = async (req, res, next) => {
     try {
-        const name = req.body.name
-        const email = req.body.email
-        const phone = req.body.phone
-        const role = req.body.role
-        const password = req.body.password
-        const ownerId = req.body.ownerId
-        // A. basic Regex (Format check)
+        const name = req.body.name;
+        const email = req.body.email;
+        const phone = req.body.phone;
+        const password = req.body.password;
+
+        // 🔒 SECURITY FIX: Ignore user input for role/ownerId.
+        // Public signups are ALWAYS Owners of a new business.
+        const role = 'OWNER';
+        const ownerId = null;
+
+        // A. Basic Regex
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
             return res.status(422).json({ message: "Invalid email format." });
         }
 
-        // B. DNS Check (Reality check) 🛡️
-        // This stops 'test@gmil.com', 'user@fake-domain-123.com', etc.
+        // B. DNS Check
         const isDomainReal = await isValidEmailDomain(email);
         if (!isDomainReal) {
-            return res.status(422).json({ message: "Invalid email domain. That domain cannot receive emails." });
+            return res.status(422).json({ message: "Invalid email domain." });
+        }
+
+        const existingUser = await User.findOne({ where: { email: email } });
+        if (existingUser) {
+            return res.status(409).json({ message: "User already exists." });
+        }
+
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        const hashedCode = await bcrypt.hash(code, 12);
+        const hashedPassword = await bcrypt.hash(password, 12);
+
+        // Clear old pending requests for this email
+        await PendingUser.destroy({ where: { email: email } });
+
+        await PendingUser.create({
+            name,
+            email,
+            password: hashedPassword,
+            phone: (phone && phone.trim().length > 0) ? phone : null,
+            role: role,     //  Hardcoded to OWNER
+            ownerId: ownerId, //  Hardcoded to NULL
+            verificationCode: hashedCode,
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+        });
+
+        await emailer.sendVerificationEmail(email, code);
+
+        res.status(200).json({ message: "Verification code sent to email." });
+
+    } catch (err) {
+        if (!err.statusCode) err.statusCode = 500;
+        next(err);
+    }
+};
+
+// PROTECTED STAFF INVITE: Only for Logged-in Owners
+// Add this route to routes/auth.js protected by isAuth middleware!
+exports.inviteStaff = async (req, res, next) => {
+    try {
+        // We get the data from the Owner who is adding the staff
+        const name = req.body.name;
+        const email = req.body.email;
+        const phone = req.body.phone;
+        const password = req.body.password; // Owner sets the initial password
+
+        // SECURITY FIX:
+        // We do NOT trust the body for ownerId. We take it from the Token.
+        const requesterId = req.userId;
+        const requester = await User.findByPk(requesterId);
+        if (!requester || requester.role !== 'OWNER') {
+            return res.status(403).json({ message: "Only Owners can invite staff." });
+        }
+
+        const role = 'EMPLOYEE';
+        const ownerId = requester.id; // Linked securely to the authenticated Owner
+
+        // ... (Same Validation Logic as above) ...
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            return res.status(422).json({ message: "Invalid email format." });
         }
 
         const existingUser = await User.findOne({ where: { email: email } });
@@ -149,15 +213,15 @@ exports.initiateSignup = async (req, res, next) => {
             email,
             password: hashedPassword,
             phone: (phone && phone.trim().length > 0) ? phone : null,
-            role: role || 'OWNER',
-            ownerId: ownerId || null,
+            role: role,       //  Hardcoded to EMPLOYEE
+            ownerId: ownerId, //  Hardcoded to Req User ID
             verificationCode: hashedCode,
             expiresAt: new Date(Date.now() + 10 * 60 * 1000)
         });
 
         await emailer.sendVerificationEmail(email, code);
 
-        res.status(200).json({ message: "Verification code sent to email." });
+        res.status(200).json({ message: "Staff verification code sent." });
 
     } catch (err) {
         if (!err.statusCode) err.statusCode = 500;

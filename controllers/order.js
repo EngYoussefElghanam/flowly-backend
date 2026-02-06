@@ -22,6 +22,7 @@ const createOrder = async (req, res, next) => {
     try {
         const customerId = req.body.customerId;
         const productsFromApp = req.body.products;
+        productsFromApp.sort((a, b) => a.id - b.id)
         const customer = await Customer.findByPk(customerId);
         // 2. 🔍 FIND THE BOSS
         const user = await User.findByPk(req.userId);
@@ -50,7 +51,7 @@ const createOrder = async (req, res, next) => {
         // 3. Process Items & Deduct Stock
         for (const item of productsFromApp) {
             // Include transaction here
-            const product = await Product.findByPk(item.id, { transaction: t });
+            const product = await Product.findByPk(item.id, { transaction: t, lock: true });
             if (!product) {
                 await t.rollback();
                 return res.status(404).json({ message: `Product ID ${item.id} not found` });
