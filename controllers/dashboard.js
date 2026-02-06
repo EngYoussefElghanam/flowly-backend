@@ -1,14 +1,30 @@
 const Order = require('../models/orders')
 const Product = require('../models/products')
 const OrderItem = require('../models/order_items')
+const User = require('../models/user') // ✅ Import User model
 const sequelize = require('sequelize')
+
+// 🛠️ HELPER: Get the correct Company/Owner ID
+const getCompanyId = (user) => {
+    if (user.role === 'OWNER') {
+        return user.id;
+    } else {
+        return user.ownerId;
+    }
+};
 
 exports.getDashboardStats = async (req, res, next) => {
     try {
-        const userId = req.userId;
+        // 1. Fetch User & Determine Company ID
+        const user = await User.findByPk(req.userId);
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
 
-        // 1. Existing Logic: Totals (Revenue, Profit, Count)
-        const orders = await Order.findAll({ where: { userId: userId } });
+        const targetId = getCompanyId(user); // ✅ Use targetId for all queries below
+        const owner = await User.findByPk(targetId)
+        // 2. Fetch Orders for the Company
+        const orders = await Order.findAll({ where: { userId: targetId } });
 
         let totalRevenue = 0;
         let totalProfit = 0;
@@ -18,25 +34,28 @@ exports.getDashboardStats = async (req, res, next) => {
             totalRevenue += parseFloat(order.totalAmount || 0);
             totalProfit += parseFloat(order.totalProfit || 0);
         }
-
-        // 2. New Logic: Low Stock Item (Threshold: 15)
-        const lowStockThreshold = 15; // 🔒 Hardcoded limit for now
+        // 🔍 DEBUG LOG
+        console.log("---------------- SETTINGS DEBUG ----------------");
+        console.log("Owner ID:", owner.id);
+        console.log("DB Value for Threshold:", owner.lowStockThreshold);
+        console.log("Effective Threshold:", owner.lowStockThreshold || 15);
+        console.log("------------------------------------------------");
+        // 3. Low Stock Logic (Using targetId)
+        const lowStockThreshold = owner.lowStockThreshold || 15;
 
         const lowStockProduct = await Product.findOne({
-            where: { userId: userId },
-            order: [['stockQuantity', 'ASC']], // Get the absolute lowest item
+            where: { userId: targetId }, // ✅ Check Company's inventory
+            order: [['stockQuantity', 'ASC']],
             attributes: ['name', 'stockQuantity']
         });
 
-        // Default text
         let lowStockText = "All Stock Good";
 
-        // Only alert if we actually found a product AND its stock is <= 15
         if (lowStockProduct && lowStockProduct.stockQuantity <= lowStockThreshold) {
             lowStockText = `${lowStockProduct.name} (${lowStockProduct.stockQuantity} units)`;
         }
 
-        // 3. New Logic: Top Selling Item
+        // 4. Top Selling Item Logic (Using targetId)
         const topSellingVariant = await OrderItem.findOne({
             attributes: [
                 [sequelize.fn('SUM', sequelize.col('quantity')), 'totalSold']
@@ -45,7 +64,7 @@ exports.getDashboardStats = async (req, res, next) => {
                 {
                     model: Order,
                     attributes: [],
-                    where: { userId: userId }
+                    where: { userId: targetId } // ✅ Filter orders by Company
                 },
                 {
                     model: Product,
@@ -62,7 +81,7 @@ exports.getDashboardStats = async (req, res, next) => {
             topSellingText = `${topSellingVariant.product.name} (${qty} sold)`;
         }
 
-        // 4. Send Response
+        // 5. Send Response
         res.status(200).json({
             totalRevenue: totalRevenue.toFixed(2),
             totalOrders: totalOrders,

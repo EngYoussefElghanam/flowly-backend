@@ -1,25 +1,46 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai')
-const { Op, Model, where } = require('sequelize')
+const { Op } = require('sequelize')
 const marketingOpportunities = require('../models/marketingOpportunity')
 const Customer = require('../models/customer')
 const User = require('../models/user')
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
 
+// 🛠️ HELPER: Get the correct Company/Owner ID
+const getCompanyId = (user) => {
+    if (user.role === 'OWNER') {
+        return user.id;
+    } else {
+        return user.ownerId;
+    }
+};
+
 exports.getOpportunities = async (req, res, next) => {
-    const userId = req.userId
-    const owner = await User.findByPk(userId)
     try {
+        const user = await User.findByPk(req.userId);
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        // ✅ FIX 1: Use Company ID (Owner's ID)
+        const targetId = getCompanyId(user);
+
+        // We need the owner object specifically to read settings (thresholds)
+        // If I am the owner, 'user' is the owner. If I am employee, I need to fetch my boss.
+        let ownerSettings = user;
+        if (user.role === 'EMPLOYEE') {
+            ownerSettings = await User.findByPk(targetId);
+        }
+
         const startOfDay = new Date()
         startOfDay.setHours(0, 0, 0, 0)
+
+        // 1. Fetch Opportunities for the COMPANY (targetId)
         const existingOpportunities = await marketingOpportunities.findAll({
             where: {
                 createdAt: { [Op.gte]: startOfDay },
-                userId: userId
+                userId: targetId // ✅ Use targetId
             },
             include: [{
                 model: Customer,
-                // ✅ ADD 'id' HERE!
                 attributes: ['id', 'name', 'phone', 'totalSpent', 'favoriteItem', 'totalOrders']
             }]
         });
@@ -28,11 +49,10 @@ exports.getOpportunities = async (req, res, next) => {
             where: {
                 status: 'SNOOZED',
                 snoozedUntil: { [Op.lte]: new Date() },
-                userId: userId
+                userId: targetId // ✅ Use targetId
             },
             include: {
                 model: Customer,
-                // ✅ ADD 'id' HERE TOO!
                 attributes: ['id', 'name', 'phone', 'totalOrders', 'totalSpent', 'favoriteItem']
             }
         })
@@ -40,17 +60,12 @@ exports.getOpportunities = async (req, res, next) => {
         if (existingOpportunities.length > 0 || wokeOpportunities.length > 0) {
             const pendingOnly = existingOpportunities.filter(o => o.status === 'PENDING');
 
-            // 2. FIX: Normalize the Data structure
-            // We map over the results to ensure "customer" is always lowercase and structured correctly
             const rawResponse = [...pendingOnly, ...wokeOpportunities].map(opp => {
-                const plainOpp = opp.toJSON(); // Convert Sequelize Instance to Plain JSON
-
-                // If Sequelize returned "Customer" (Capital), move it to "customer" (Lower)
+                const plainOpp = opp.toJSON();
                 if (plainOpp.Customer) {
                     plainOpp.customer = plainOpp.Customer;
                     delete plainOpp.Customer;
                 }
-
                 return plainOpp;
             });
 
@@ -58,31 +73,39 @@ exports.getOpportunities = async (req, res, next) => {
         }
 
         //CACHE MISS now generate and call AI
-        console.log("Generating new AI Marketing Opportunities......")
-        const inactiveThreshold = owner.inactiveThreshold || 30
-        const vipOrderThreshold = owner.vipOrderThreshold || 5
+        console.log(`Generating new AI Marketing Opportunities for Company ${targetId}......`)
+
+        // Use settings from the Owner object we fetched earlier
+        const inactiveThreshold = ownerSettings.inactiveThreshold || 30
+        const vipOrderThreshold = ownerSettings.vipOrderThreshold || 5
+
         const minimumInactiveDate = new Date()
         minimumInactiveDate.setDate(minimumInactiveDate.getDate() - inactiveThreshold)
+
         const sevenDaysAgo = new Date()
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+
         const inactiveCustomers = await Customer.findAll({
             where: {
-                userId: userId,
-                lastOrderDate: { [Op.lt]: minimumInactiveDate }, [Op.or]: [
-                    { lastMarketingSentAt: null }, // Never messaged
-                    { lastMarketingSentAt: { [Op.lt]: sevenDaysAgo } } // Messaged > 7 days ago
+                userId: targetId, // ✅ Use targetId
+                lastOrderDate: { [Op.lt]: minimumInactiveDate },
+                [Op.or]: [
+                    { lastMarketingSentAt: null },
+                    { lastMarketingSentAt: { [Op.lt]: sevenDaysAgo } }
                 ]
             },
-            limit: 5 // Limit to 5 to save AI tokens
+            limit: 5
         })
-        //find vip customers
+
         const vipCustomers = await Customer.findAll({
             where: {
-                userId: userId,
+                userId: targetId, // ✅ Use targetId
                 totalOrders: { [Op.gte]: vipOrderThreshold },
-                lastOrderDate: { [Op.gte]: minimumInactiveDate }, [Op.or]: [
-                    { lastMarketingSentAt: null }, // Never messaged
-                    { lastMarketingSentAt: { [Op.lt]: sevenDaysAgo } } // Messaged > 7 days ago
+                // You usually want VIPs to be active, but removed the strict date check here to catch 'recent' VIPs too.
+                // You can add it back if you only want 'current' VIPs.
+                [Op.or]: [
+                    { lastMarketingSentAt: null },
+                    { lastMarketingSentAt: { [Op.lt]: sevenDaysAgo } }
                 ]
             },
             limit: 5
@@ -92,25 +115,18 @@ exports.getOpportunities = async (req, res, next) => {
             ...inactiveCustomers.map(c => ({ customer: c, type: 'WIN_BACK' })),
             ...vipCustomers.map(c => ({ customer: c, type: 'VIP_REWARD' }))
         ]
-        // D. The AI Loop
+
         const newOpportunities = [];
 
-        // Use Flash model for speed
+        // Note: Ensure model name is correct. Usually 'gemini-1.5-flash' or 'gemini-pro'.
+        // 'gemini-2.5-flash' might not exist yet depending on the SDK version.
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
         for (const item of allCandidates) {
             const c = item.customer;
-
-            // 1. Identify the "Hook" (What are we offering?)
-            // If they have a favorite, use it. If not, use generic "your next order".
             const productHook = c.favoriteItem ? c.favoriteItem : "your next order";
-
-            // 2. Define the Offer 
-            // WIN_BACK = Aggressive discount to lure them back. 
-            // VIP = Reward (BOGO) for loyalty.
             const offer = item.type === 'WIN_BACK' ? "20% Off" : "Buy 1 Get 1 Free";
 
-            // 3. Dynamic Prompt
             const prompt = `
                 You are an automated marketing assistant for a business (online or physical).
                 Write a short, friendly WhatsApp message (max 20 words).
@@ -133,22 +149,19 @@ exports.getOpportunities = async (req, res, next) => {
                 const response = await result.response;
                 const text = response.text().trim();
 
-                // Save to DB
                 const opp = await marketingOpportunities.create({
                     customerId: c.id,
                     type: item.type,
                     aiMessage: text,
                     status: 'PENDING',
-                    userId: userId
+                    userId: targetId // ✅ Use targetId
                 });
 
-                // Attach customer data manually for the response so frontend doesn't need to refresh
                 opp.dataValues.customer = c;
                 newOpportunities.push(opp);
 
             } catch (err) {
                 console.error("Gemini Error:", err);
-                // Skip this one if AI fails to keep the loop going
             }
         }
 
@@ -162,30 +175,37 @@ exports.getOpportunities = async (req, res, next) => {
 // 3. ACTIONS (Send / Dismiss) 👆
 exports.handleAction = async (req, res, next) => {
     const oppId = req.params.id;
-    const action = req.body.action; // 'SENT', 'SNOOZED', or 'REJECTED'
+    const action = req.body.action;
 
     try {
-        const opp = await marketingOpportunities.findByPk(oppId);
-        if (!opp) return res.status(404).json({ message: "Not found" });
+        // Technically, any employee of the company can act on an opportunity.
+        // But we should verify they belong to the same company.
+
+        const user = await User.findByPk(req.userId);
+        const targetId = getCompanyId(user);
+
+        const opp = await marketingOpportunities.findOne({
+            where: { id: oppId, userId: targetId } // ✅ Security Check
+        });
+
+        if (!opp) return res.status(404).json({ message: "Not found or unauthorized" });
 
         if (action === 'SENT') {
             opp.status = 'SENT';
-            // Update Customer "Last Seen" for marketing
             const customer = await Customer.findByPk(opp.customerId);
-            customer.lastMarketingSentAt = new Date();
-            await customer.save();
+            if (customer) {
+                customer.lastMarketingSentAt = new Date();
+                await customer.save();
+            }
 
         } else if (action === 'SNOOZED') {
-            // 🟡 Swipe Left logic
             opp.status = 'SNOOZED';
             const wakeUpDate = new Date();
-            wakeUpDate.setDate(wakeUpDate.getDate() + 2); // Remind in 2 days
-            opp.snoozeUntil = wakeUpDate;
+            wakeUpDate.setDate(wakeUpDate.getDate() + 2);
+            opp.snoozedUntil = wakeUpDate; // Check your DB column name (snoozeUntil vs snoozedUntil)
 
         } else if (action === 'REJECTED') {
-            // 🔴 "X" Button logic
             opp.status = 'DISMISSED';
-            // We do NOT set a snooze date. It's dead.
         }
 
         await opp.save();

@@ -1,22 +1,42 @@
 const Product = require("../models/products")
 const User = require("../models/user")
 const OrderItem = require('../models/order_items')
+
+// 🛠️ HELPER: Get the correct Company/Owner ID
+// If I am Owner -> My ID. If I am Employee -> My Boss's ID.
+const getCompanyId = (user) => {
+    if (user.role === 'OWNER') {
+        return user.id;
+    } else {
+        return user.ownerId;
+    }
+};
+
 const createProduct = async (req, res, next) => {
     try {
         const name = req.body.name
         const costPrice = req.body.costPrice
         const sellPrice = req.body.sellPrice
         const stock = req.body.stockQuantity
+
         const user = await User.findByPk(req.userId);
         if (!user) {
             return res.status(404).json({ message: "User not found" })
         }
-        const targetId = user.ownerId
+
+        // ✅ FIX: Use helper logic
+        const targetId = getCompanyId(user);
+
+        // Safety check
+        if (!targetId) {
+            return res.status(400).json({ message: "Account setup error: No Company ID found." });
+        }
+
         const result = await Product.create({
             name: name,
             costPrice: costPrice,
             sellPrice: sellPrice,
-            userId: targetId,
+            userId: targetId, // ✅ Now correct for Owners too
             stockQuantity: stock,
         })
         res.status(201).json({
@@ -31,13 +51,17 @@ const createProduct = async (req, res, next) => {
         });
     }
 }
+
 const getProducts = async (req, res, next) => {
     try {
         const user = await User.findByPk(req.userId);
         if (!user) {
             return res.status(404).json({ message: "User not found" })
         }
-        const targetId = user.ownerId
+
+        // ✅ FIX: Use helper logic
+        const targetId = getCompanyId(user);
+
         const products = await Product.findAll({ where: { userId: targetId } })
         res.status(200).json({ data: products })
     } catch (error) {
@@ -53,7 +77,13 @@ const updateProduct = async (req, res, next) => {
         const costPrice = req.body.costPrice
         const sellPrice = req.body.sellPrice
         const stock = req.body.stockQuantity
-        const product = await Product.findOne({ where: { id: productId, userId: req.userId } })
+
+        const user = await User.findByPk(req.userId);
+        // ✅ FIX: Use helper logic to find product belonging to company
+        const targetId = getCompanyId(user);
+
+        const product = await Product.findOne({ where: { id: productId, userId: targetId } })
+
         if (!product) {
             return res.status(404).json({ message: "Product not found or unauthorized" });
         }
@@ -73,8 +103,12 @@ const deleteProduct = async (req, res, next) => {
     const productId = req.params.id;
 
     try {
+        const user = await User.findByPk(req.userId);
+        // ✅ FIX: Use helper logic
+        const targetId = getCompanyId(user);
+
         const product = await Product.findOne({
-            where: { id: productId, userId: req.userId }
+            where: { id: productId, userId: targetId }
         });
 
         if (!product) {
@@ -87,16 +121,14 @@ const deleteProduct = async (req, res, next) => {
         });
 
         if (salesCount > 0) {
-            // 🛡️ SCENARIO A: It was sold before. 
-            // We MUST Archive it to keep order history intact.
+            // 🛡️ SCENARIO A: Archive
             product.isArchived = true;
             await product.save();
             return res.status(200).json({
                 message: "Product archived (Item has sales history)"
             });
         } else {
-            // 🗑️ SCENARIO B: It was never sold (e.g., a mistake).
-            // We can safely Hard Delete it to save space.
+            // 🗑️ SCENARIO B: Hard Delete
             await product.destroy();
             return res.status(200).json({
                 message: "Product permanently deleted"

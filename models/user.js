@@ -46,6 +46,11 @@ const user = db.define('user', {
         type: sequelize.INTEGER,
         defaultValue: 5,
         allowNull: false
+    },
+    lowStockThreshold: {
+        type: sequelize.INTEGER,
+        defaultValue: 10,
+        allowNull: false
     }
 })
 

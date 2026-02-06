@@ -6,6 +6,15 @@ const db = require("../util/db")
 const User = require("../models/user");
 const sequelize = require("sequelize");
 
+// --- HELPER FUNCTION: Get the correct Company/Owner ID ---
+const getCompanyId = (user) => {
+    if (user.role === 'OWNER') {
+        return user.id; // Owners ARE the company
+    } else {
+        return user.ownerId; // Employees work FOR the company
+    }
+};
+
 const createOrder = async (req, res, next) => {
     // 1. Start the Transaction Bucket 🛒
     const t = await db.transaction();
@@ -20,7 +29,14 @@ const createOrder = async (req, res, next) => {
             await t.rollback();
             return res.status(404).json({ message: "User not found" });
         }
-        const companyId = user.ownerId;
+
+        // ✅ FIX: Determine Company ID dynamically
+        const companyId = getCompanyId(user);
+
+        if (!companyId) {
+            await t.rollback();
+            return res.status(400).json({ message: "Configuration Error: User has no valid Company ID." });
+        }
 
         let total_amount = 0;
         let total_cost = 0;
@@ -30,12 +46,18 @@ const createOrder = async (req, res, next) => {
         for (const item of productsFromApp) {
             // Include transaction here
             const product = await Product.findByPk(item.id, { transaction: t });
-
+            console.log("---------------- DEBUG TRANSACTION ----------------");
+            console.log(`Checking Product ID: ${item.id}`);
+            console.log(`Product Owner (DB): ${product ? product.userId : 'NULL'}`);
+            console.log(`Current Company ID: ${companyId}`);
+            console.log(`Requested Qty: ${item.quantity} | Available: ${product ? product.stockQuantity : 'N/A'}`);
+            console.log("---------------------------------------------------");
             if (!product) {
                 await t.rollback();
                 return res.status(404).json({ message: `Product ID ${item.id} not found` });
             }
 
+            // ✅ FIX: Ensure product belongs to THIS company
             if (product.userId !== companyId) {
                 await t.rollback();
                 return res.status(403).json({ message: "You cannot sell products from another company!" });
@@ -76,7 +98,7 @@ const createOrder = async (req, res, next) => {
             courierName: req.body.courierName || '',
             notes: req.body.notes || '',
             customerId: customerId,
-            userId: companyId,
+            userId: companyId, // ✅ Saving under the correct Owner ID
         }, { transaction: t });
 
         // 6. Create Order Items
@@ -98,8 +120,6 @@ const createOrder = async (req, res, next) => {
                 customer.totalSpent += total_amount;
 
                 // B. 🧠 Calculate Favorite Item (The "Winner" Query)
-                // We ask the DB: "Sum up quantities for this user, group by product, give me #1"
-                // This counts the items we JUST added because we are inside transaction 't'
                 const topProduct = await OrderItem.findAll({
                     attributes: [
                         'productId',
@@ -107,12 +127,12 @@ const createOrder = async (req, res, next) => {
                     ],
                     include: [{
                         model: Order,
-                        where: { customerId: customerId }, // Filter by this customer
-                        attributes: [] // Don't fetch order data, just use for filtering
+                        where: { customerId: customerId },
+                        attributes: []
                     }],
-                    group: ['productId', 'orderItem.productId'], // Grouping rules
-                    order: [[sequelize.literal('"totalQty"'), 'DESC']], // Highest Quantity on top
-                    limit: 1, // Only need the winner
+                    group: ['productId', 'orderItem.productId'],
+                    order: [[sequelize.literal('"totalQty"'), 'DESC']],
+                    limit: 1,
                     transaction: t
                 });
 
@@ -142,7 +162,6 @@ const createOrder = async (req, res, next) => {
         });
 
     } catch (error) {
-        // If ANYTHING above fails, undo it all
         await t.rollback();
         console.log(error);
         res.status(500).json({ message: 'Creating order failed.', error: error });
@@ -151,11 +170,13 @@ const createOrder = async (req, res, next) => {
 
 const getOrders = async (req, res, next) => {
     try {
-        // 1. Fetch based on Owner ID
         const user = await User.findByPk(req.userId);
 
+        //FIX: Use helper to get correct ID
+        const targetId = getCompanyId(user);
+
         const orders = await Order.findAll({
-            where: { userId: user.ownerId }, // <--- THE FIX
+            where: { userId: targetId },
             include: [Customer, Product],
             order: [['createdAt', 'DESC']]
         })
@@ -171,8 +192,12 @@ const getOrderDetails = async (req, res, next) => {
     const orderId = req.params.id
     try {
         const user = await User.findByPk(req.userId);
+
+        // ✅ FIX: Use helper
+        const targetId = getCompanyId(user);
+
         const order = await Order.findOne({
-            where: { id: orderId, userId: user.ownerId },
+            where: { id: orderId, userId: targetId },
             include: [{ model: Product }]
         })
         if (!order) {
@@ -192,9 +217,11 @@ const updateStatus = async (req, res, next) => {
 
         const user = await User.findByPk(req.userId);
 
-        // 2. Check using Owner ID
+        // ✅ FIX: Use helper
+        const targetId = getCompanyId(user);
+
         const order = await Order.findOne({
-            where: { id: orderId, userId: user.ownerId } // <--- THE FIX
+            where: { id: orderId, userId: targetId }
         })
 
         if (!order) {

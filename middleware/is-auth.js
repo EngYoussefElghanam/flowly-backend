@@ -16,6 +16,6 @@ module.exports = async (req, res, next) => {
         return res.status(401).json({ message: "Not Authenticated" })
     }
     req.userId = decodeToken.userId
-    req.email = decodeToken.email; // <--- Add this line
+    req.email = decodeToken.email
     next();
 }
