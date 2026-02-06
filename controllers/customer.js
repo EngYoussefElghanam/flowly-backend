@@ -100,12 +100,10 @@ exports.getCustomerDetails = async (req, res, next) => {
 exports.getCustomerStats = async (req, res, next) => {
     const customerId = req.params.id
     try {
-        // Optional: You could add a security check here using getCompanyId 
-        // to ensure the user actually owns this customer before calculating stats,
-        // but for now, this logic works as long as the ID is valid.
-
+        const user = await User.findByPk(req.userId)
+        const companyId = getCompanyId(user)
         const orders = await Order.findAll({
-            where: { customerId: customerId, status: "DELIVERED" },
+            where: { customerId: customerId, status: "DELIVERED", userId: companyId },
             include: [{ model: OrderItem, include: [{ model: Product }] }]
         })
 

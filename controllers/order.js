@@ -22,7 +22,7 @@ const createOrder = async (req, res, next) => {
     try {
         const customerId = req.body.customerId;
         const productsFromApp = req.body.products;
-
+        const customer = await Customer.findByPk(customerId);
         // 2. 🔍 FIND THE BOSS
         const user = await User.findByPk(req.userId);
         if (!user) {
@@ -38,6 +38,11 @@ const createOrder = async (req, res, next) => {
             return res.status(400).json({ message: "Configuration Error: User has no valid Company ID." });
         }
 
+        if (customer.userId != companyId) {
+            await t.rollback();
+            return res.status(403).json({ message: "Authorization error this customer doesn't belong to the owner" })
+        }
+
         let total_amount = 0;
         let total_cost = 0;
         const orderItemsData = [];
@@ -46,12 +51,6 @@ const createOrder = async (req, res, next) => {
         for (const item of productsFromApp) {
             // Include transaction here
             const product = await Product.findByPk(item.id, { transaction: t });
-            console.log("---------------- DEBUG TRANSACTION ----------------");
-            console.log(`Checking Product ID: ${item.id}`);
-            console.log(`Product Owner (DB): ${product ? product.userId : 'NULL'}`);
-            console.log(`Current Company ID: ${companyId}`);
-            console.log(`Requested Qty: ${item.quantity} | Available: ${product ? product.stockQuantity : 'N/A'}`);
-            console.log("---------------------------------------------------");
             if (!product) {
                 await t.rollback();
                 return res.status(404).json({ message: `Product ID ${item.id} not found` });
