@@ -69,14 +69,23 @@ marketingOpportunities.belongsTo(Customer)
 User.hasMany(marketingOpportunities);
 marketingOpportunities.belongsTo(User);
 // 3. SYNC DATABASE & START SERVER
+// 3. SYNC DATABASE & START SERVER
 sequelize
-    .sync({ alter: true })
-    .then(result => {
-        console.log("✅ Database Connected & Tables Linked!");
-        app.listen(3000, '0.0.0.0', () => {
-            console.log("🚀 Server is running on port 3000");
-        });
+    .authenticate()
+    .then(() => {
+        console.log("✅ DB Authenticated (Neon reachable)");
+        return sequelize.sync();
     })
-    .catch(err => {
+    .then(() => {
+        console.log("✅ Tables synced!");
+        const PORT = process.env.PORT || 3000;
+
+        app.listen(PORT, "0.0.0.0", () => {
+            console.log("🚀 Server is running on port " + PORT);
+        });
+
+    })
+    .catch((err) => {
         console.log("❌ Database Error:", err);
+        process.exit(1);
     });

@@ -51,7 +51,7 @@ const createOrder = async (req, res, next) => {
         // 3. Process Items & Deduct Stock
         for (const item of productsFromApp) {
             // Include transaction here
-            const product = await Product.findByPk(item.id, { transaction: t, lock: true });
+            const product = await Product.findByPk(item.id, { transaction: t, lock: t.LOCK.UPDATE });
             if (!product) {
                 await t.rollback();
                 return res.status(404).json({ message: `Product ID ${item.id} not found` });
