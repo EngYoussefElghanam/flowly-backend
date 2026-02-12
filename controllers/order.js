@@ -51,7 +51,7 @@ const createOrder = async (req, res, next) => {
         // 3. Process Items & Deduct Stock
         for (const item of productsFromApp) {
             // Include transaction here
-            const product = await Product.findByPk(item.id, { transaction: t, lock: t.LOCK.UPDATE });
+            const product = await Product.findByPk(item.id, { transaction: t, lock: true });
             if (!product) {
                 await t.rollback();
                 return res.status(404).json({ message: `Product ID ${item.id} not found` });
@@ -211,32 +211,97 @@ const getOrderDetails = async (req, res, next) => {
 }
 
 const updateStatus = async (req, res, next) => {
-    try {
-        const orderId = req.params.id
-        const status = req.body.status
+    // 1. Start the Transaction Bucket 🛒
+    const t = await db.transaction();
 
+    try {
+        const orderId = req.params.id;
+        const newStatus = req.body.status;
         const user = await User.findByPk(req.userId);
 
-        // ✅ FIX: Use helper
+        // Use helper to get correct Company ID
         const targetId = getCompanyId(user);
 
+        // 2. Find Order & LOCK it 🔒
+        // We use lock: true so no one else can edit this order while we are calculating
         const order = await Order.findOne({
-            where: { id: orderId, userId: targetId }
-        })
+            where: { id: orderId, userId: targetId },
+            transaction: t,
+            lock: true
+        });
 
         if (!order) {
-            return res.status(404).json({ message: "Order Not Found" })
+            await t.rollback();
+            return res.status(404).json({ message: "Order Not Found" });
         }
 
-        order.status = status;
+        const oldStatus = order.status;
+
+        // DEFINITIONS:
+        // "Dead" Status = The items are effectively back in the shop.
+        // "Alive" Status = The items are gone/sold.
+        const isNowDead = (newStatus === 'RETURNED' || newStatus === 'CANCELLED');
+        const wasDead = (oldStatus === 'RETURNED' || oldStatus === 'CANCELLED');
+
+        // 3. LOGIC BRANCHING 🌳
+
+        // SCENARIO A: The order is being CANCELLED (Alive -> Dead) 
+        // Action: RESTOCK (+ Increase)
+        if (isNowDead && !wasDead) {
+            const orderItems = await OrderItem.findAll({ where: { orderId: order.id }, transaction: t });
+
+            for (const item of orderItems) {
+                const product = await Product.findByPk(item.productId, { transaction: t, lock: true });
+
+                if (product) {
+                    product.stockQuantity += item.quantity; // Put back
+                    await product.save({ transaction: t });
+                    console.log(`🔄 Restocked Product ${product.name}: +${item.quantity}`);
+                }
+            }
+        }
+
+        // SCENARIO B: The order is being REACTIVATED (Dead -> Alive)
+        // Action: DESTOCK (- Decrease)
+        else if (!isNowDead && wasDead) {
+            const orderItems = await OrderItem.findAll({ where: { orderId: order.id }, transaction: t });
+
+            for (const item of orderItems) {
+                const product = await Product.findByPk(item.productId, { transaction: t, lock: true });
+
+                if (product) {
+                    // ⚠️ SAFETY CHECK: Do we actually have enough to re-sell?
+                    if (product.stockQuantity < item.quantity) {
+                        await t.rollback();
+                        return res.status(400).json({
+                            message: `Cannot re-activate order! Not enough stock for ${product.name}.`
+                        });
+                    }
+
+                    product.stockQuantity -= item.quantity; // Take out again
+                    await product.save({ transaction: t });
+                    console.log(`📉 Re-sold Product ${product.name}: -${item.quantity}`);
+                }
+            }
+        }
+
+        // 4. Update the actual status
+        order.status = newStatus;
         if (req.body.trackingNumber) {
-            order.trackingNumber = req.body.trackingNumber
+            order.trackingNumber = req.body.trackingNumber;
         }
-        await order.save()
 
-        res.status(200).json({ message: "Order updated successfully" })
+        await order.save({ transaction: t });
+
+        // 5. Commit everything 💾
+        await t.commit();
+        res.status(200).json({ message: "Order updated successfully" });
+
     } catch (error) {
-        res.status(500).json({ message: "Server failure updating status" })
+        // Safety rollback
+        try { await t.rollback(); } catch (e) { }
+        console.error("Update Status Error:", error);
+        res.status(500).json({ message: "Server failure updating status" });
     }
 }
 

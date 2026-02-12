@@ -38,7 +38,7 @@ exports.getEmployees = async (req, res, next) => {
 }
 
 exports.deleteUser = async (req, res, next) => {
-    const t = await sequelize.transaction(); // Ensure 'sequelize' is imported/available
+    const t = await sequelize.transaction();
     try {
         const intendedId = Number(req.params.id);
         if (!Number.isInteger(intendedId)) {
