@@ -3,25 +3,18 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 
-// 1. Import the Database Connection
+// Database and route registration.
 const sequelize = require('./util/db');
 
-//Import routes
-const productRoute = require("./routes/product")
+const productRoute = require('./routes/product');
 const orderRoutes = require('./routes/order');
-const authRoutes = require("./routes/auth")
-const customerRoutes = require("./routes/customer")
-const dashboardRoutes = require("./routes/dashboard")
+const authRoutes = require('./routes/auth');
+const customerRoutes = require('./routes/customer');
+const dashboardRoutes = require('./routes/dashboard');
 const marketingRoutes = require('./routes/marketing');
-const settingsRoutes = require('./routes/settings')
+const settingsRoutes = require('./routes/settings');
 
-// 2. Import All Your Models
-const User = require('./models/user');
-const Product = require('./models/products');
-const Customer = require('./models/customer');
-const Order = require('./models/orders');
-const OrderItem = require('./models/order_items');
-const marketingOpportunities = require('./models/marketingOpportunity');
+require('./models');
 
 const app = express();
 
@@ -30,62 +23,36 @@ app.use(bodyParser.json());
 app.use(cors());
 app.use('/api', productRoute);
 app.use('/api', orderRoutes);
-app.use('/api', authRoutes)
-app.use('/api', customerRoutes)
-app.use('/api', dashboardRoutes)
+app.use('/api', authRoutes);
+app.use('/api', customerRoutes);
+app.use('/api', dashboardRoutes);
 app.use('/marketing', marketingRoutes);
-app.use('/api', settingsRoutes)
+app.use('/api', settingsRoutes);
 // Test Route
 app.get('/', (req, res) => {
-    res.json({ message: 'Seller App Backend is Running!' });
+  res.json({ message: 'Seller App Backend is Running!' });
 });
 
-// --- RELATIONSHIP 1: User owns everything
-User.hasMany(Product, { constraints: true, onDelete: 'CASCADE' });
-Product.belongsTo(User);
-
-User.hasMany(Customer, { constraints: true, onDelete: 'CASCADE' });
-Customer.belongsTo(User);
-
-User.hasMany(Order, { constraints: true, onDelete: 'CASCADE' });
-Order.belongsTo(User);
-
-
-// --- RELATIONSHIP 2: Customer & Order
-Customer.hasMany(Order, { constraints: true, onDelete: 'SET NULL' })
-Order.belongsTo(Customer)
-
-
-// --- RELATIONSHIP 3: Order & Product (Many-to-Many)
-Order.belongsToMany(Product, { through: OrderItem })
-Product.belongsToMany(Order, { through: OrderItem })
-
-Order.hasMany(OrderItem, { onDelete: 'CASCADE', hooks: true })
-OrderItem.belongsTo(Order);
-OrderItem.belongsTo(Product);
-Product.hasMany(OrderItem);
-Customer.hasMany(marketingOpportunities)
-marketingOpportunities.belongsTo(Customer)
-User.hasMany(marketingOpportunities);
-marketingOpportunities.belongsTo(User);
-// 3. SYNC DATABASE & START SERVER
-// 3. SYNC DATABASE & START SERVER
-sequelize
+// Importing the app for tests must not connect to the database or bind a port.
+if (require.main === module) {
+  sequelize
     .authenticate()
     .then(() => {
-        console.log("✅ DB Authenticated (Neon reachable)");
-        return sequelize.sync();
+      console.log('✅ Database connection established');
+      return sequelize.sync();
     })
     .then(() => {
-        console.log("✅ Tables synced!");
-        const PORT = process.env.PORT || 3000;
+      console.log('✅ Tables synced!');
+      const PORT = process.env.PORT || 3000;
 
-        app.listen(PORT, "0.0.0.0", () => {
-            console.log("🚀 Server is running on port " + PORT);
-        });
-
+      app.listen(PORT, '0.0.0.0', () => {
+        console.log('🚀 Server is running on port ' + PORT);
+      });
     })
     .catch((err) => {
-        console.log("❌ Database Error:", err);
-        process.exit(1);
+      console.log('❌ Database Error:', err);
+      process.exit(1);
     });
+}
+
+module.exports = app;
