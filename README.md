@@ -1,34 +1,70 @@
+<div align="center">
+
 # Flowly Backend
 
 **Inventory, orders, and customer management for small businesses.**
 
-Flowly is an Express API backed by PostgreSQL. It supports a mobile seller workflow: maintain a product catalog, create customer orders, track fulfillment, and review business metrics. Owners and employees share records scoped to the business owner.
+An Express + PostgreSQL API powering a mobile seller workflow: catalog, orders, customers, and business insights in one place.
+
+![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white)
+![Express](https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Sequelize%206-4169E1?logo=postgresql&logoColor=white)
+![Status](https://img.shields.io/badge/status-in%20development-orange)
+
+[Getting Started](#getting-started) · [API Overview](#api-overview) · [Documentation](#documentation) · [Limitations](#status-and-limitations)
+
+</div>
+
+---
+
+## Overview
+
+Flowly lets a small-business owner and their staff run day-to-day operations from a mobile app: maintain a product catalog, create customer orders, track fulfillment, and review key metrics. Owners and employees share records scoped to the business owner.
+
+> **Project status:** Flowly Backend is an application backend in active development. It is not a hosted demo, and it makes no claim of production readiness.
 
 ## Features
 
-- **Accounts and staff:** email-verified signup, JWT authentication, and owner-managed staff invitations.
-- **Inventory:** product pricing, stock quantities, and archival of products with sales history.
-- **Orders:** transactional stock deductions, fulfillment statuses, and purchase-time price/cost snapshots.
-- **Customers:** contact details, recent orders, and delivered-order statistics.
-- **Dashboard:** revenue, profit, average order value, low-stock items, and top-selling products.
-- **AI marketing drafts:** Gemini-generated win-back and VIP messages, with sent, snoozed, and dismissed states. This API does not send WhatsApp messages.
+| Area | What it does |
+| --- | --- |
+| **Accounts & staff** | Email-verified signup, JWT authentication, and owner-managed staff invitations. |
+| **Inventory** | Product pricing, stock quantities, and archival of products that have sales history. |
+| **Orders** | Transactional stock deductions, fulfillment statuses, and purchase-time price and cost snapshots. |
+| **Customers** | Contact details, recent orders, and delivered-order statistics. |
+| **Dashboard** | Revenue, profit, average order value, low-stock items, and top-selling products. |
+| **AI marketing drafts** | Gemini-generated win-back and VIP messages with sent, snoozed, and dismissed states. *Drafts only: this API does not send WhatsApp messages.* |
 
-This repository is an application backend in development. It is not a hosted demo or a claim of production readiness.
+## Architecture
 
-## Stack
+```mermaid
+flowchart LR
+    App[Mobile app] -->|JWT| API[Express API]
+    API --> DB[(PostgreSQL)]
+    API -->|verification email| Brevo[Brevo]
+    API -->|marketing drafts| Gemini[Gemini]
+```
 
-| Layer              | Technology                    |
-| ------------------ | ----------------------------- |
-| HTTP API           | Node.js, Express 5            |
-| Database           | PostgreSQL, Sequelize 6       |
-| Authentication     | JSON Web Tokens, bcrypt       |
-| Verification email | Brevo REST API                |
-| AI drafts          | Google Generative AI SDK      |
-| Checks             | Node.js test runner, Prettier |
+**Tech stack**
 
-## Getting started
+| Layer | Technology |
+| --- | --- |
+| HTTP API | Node.js, Express 5 |
+| Database | PostgreSQL, Sequelize 6 |
+| Authentication | JSON Web Tokens, bcrypt |
+| Verification email | Brevo REST API |
+| AI drafts | Google Generative AI SDK |
+| Checks | Node.js test runner, Prettier |
 
-Use Node.js 22 or newer, npm, and a PostgreSQL database that accepts TLS connections. The current database configuration requires TLS; a default local PostgreSQL installation without TLS will not connect.
+## Getting Started
+
+### Prerequisites
+
+- Node.js 22 or newer, and npm
+- A PostgreSQL database that **accepts TLS connections**
+
+> **Note:** The current database configuration requires TLS. A default local PostgreSQL installation without TLS will not connect.
+
+### Installation
 
 ```bash
 git clone https://github.com/EngYoussefElghanam/flowly-backend.git
@@ -37,72 +73,95 @@ npm ci
 cp .env.example .env
 ```
 
-Fill in `.env` using the [configuration reference](docs/README.md#configuration). Set a long, random `JWT_SECRET`. Signup requires a Brevo API key and a verified sender. The Gemini key is needed only when generating new marketing drafts.
+### Configuration
+
+Fill in `.env` using the [configuration reference](docs/README.md#configuration).
+
+- Set a long, random `JWT_SECRET`.
+- Signup requires a Brevo API key and a verified sender.
+- The Gemini key is only needed when generating new marketing drafts.
+
+### Run
 
 ```bash
-npm run dev
+npm run dev     # development, with file watching
+npm start       # standard start
 ```
 
-For a normal start without file watching:
+On startup the server authenticates to PostgreSQL, runs `sequelize.sync()`, and then listens on `PORT` (default `3000`). It does not create the database itself, and startup can create missing tables, but it is not a versioned migration system.
 
-```bash
-npm start
-```
-
-The server authenticates to PostgreSQL, runs `sequelize.sync()`, and then listens on `PORT` (default `3000`). It does not create the database itself. Startup can create missing tables; it is not a versioned migration system.
+### Verify
 
 ```bash
 curl http://localhost:3000/
 ```
 
-Expected response:
-
 ```json
 { "message": "Seller App Backend is Running!" }
 ```
 
-## API at a glance
+## API Overview
 
-Most endpoints use `/api`; marketing uses `/marketing`. Protected requests require `Authorization: Bearer <token>`.
+Most endpoints live under `/api`; marketing lives under `/marketing`. Protected requests require:
 
-| Resource       | Base path                   | Capabilities                                         |
-| -------------- | --------------------------- | ---------------------------------------------------- |
+```
+Authorization: Bearer <token>
+```
+
+| Resource | Base path | Capabilities |
+| --- | --- | --- |
 | Authentication | `/api/signup`, `/api/login` | Owner signup, verification, staff invitations, login |
-| Users          | `/api/users`                | List employees, delete an authorized account         |
-| Products       | `/api/products`             | Create, list, update, archive or delete              |
-| Customers      | `/api/customers`            | Create, list, details, statistics                    |
-| Orders         | `/api/orders`               | Create, list, details, update status                 |
-| Dashboard      | `/api/dashboard`            | Business summary                                     |
-| Settings       | `/api/settings`             | Read and update thresholds                           |
-| Marketing      | `/marketing`                | Generate/read drafts and record actions              |
+| Users | `/api/users` | List employees, delete an authorized account |
+| Products | `/api/products` | Create, list, update, archive or delete |
+| Customers | `/api/customers` | Create, list, details, statistics |
+| Orders | `/api/orders` | Create, list, details, update status |
+| Dashboard | `/api/dashboard` | Business summary |
+| Settings | `/api/settings` | Read and update thresholds |
+| Marketing | `/marketing` | Generate and read drafts, record actions |
 
-See the [API reference](docs/API.md) for every route, request examples, and important behavior.
+The full route list, request examples, and behavioral notes are in the [API reference](docs/API.md).
 
 ## Development
 
 ```bash
-npm test
-npm run check
-npm run format:check
-npm run format
+npm test               # run the test suite
+npm run check          # static checks
+npm run format:check   # verify formatting
+npm run format         # apply formatting
 ```
 
-Tests exercise HTTP authentication boundaries and the settings failure path without connecting to a live database or contacting email/AI providers. They do not validate the full order lifecycle against PostgreSQL.
+Tests cover HTTP authentication boundaries and the settings failure path, without connecting to a live database or contacting email and AI providers. They **do not** validate the full order lifecycle against PostgreSQL.
 
-| Directory      | Responsibility                                         |
-| -------------- | ------------------------------------------------------ |
-| `routes/`      | URL registration and authentication middleware         |
-| `controllers/` | Request handling and business operations               |
-| `models/`      | Sequelize models and associations                      |
-| `middleware/`  | JWT verification                                       |
-| `util/`        | Database, email, and company-scope helpers             |
-| `test/`        | Database-independent regression and HTTP tests         |
-| `docs/`        | Setup details, API reference, and implementation notes |
+### Project structure
 
-## Implementation notes
+| Directory | Responsibility |
+| --- | --- |
+| `routes/` | URL registration and authentication middleware |
+| `controllers/` | Request handling and business operations |
+| `models/` | Sequelize models and associations |
+| `middleware/` | JWT verification |
+| `util/` | Database, email, and company-scope helpers |
+| `test/` | Database-independent regression and HTTP tests |
+| `docs/` | Setup details, API reference, and implementation notes |
 
-Purchase-time cost and sale-price snapshots preserve historical order profit when catalog prices change. Cancelled and returned orders restore stock; reactivating them deducts stock again.
+## Design Notes
 
-Dashboard totals currently include all order statuses, while the customer statistics endpoint counts delivered orders. Marketing counters are updated during order creation. These views have different semantics and should not be treated as reconciled financial reports.
+- **Historical profit stays accurate.** Purchase-time cost and sale-price snapshots preserve order profit even when catalog prices change.
+- **Stock follows order state.** Cancelled and returned orders restore stock; reactivating them deducts it again.
 
-See [current limitations](docs/README.md#current-limitations) before using the API with real business data.
+## Status and Limitations
+
+Some views intentionally use different semantics and should not be treated as reconciled financial reports:
+
+- Dashboard totals currently include **all** order statuses.
+- The customer statistics endpoint counts **delivered** orders only.
+- Marketing counters are updated during order creation.
+
+Review the [current limitations](docs/README.md#current-limitations) before using the API with real business data.
+
+## Documentation
+
+| Document | Contents |
+| --- | --- |
+| [docs/README.md](docs/README.md) | Configuration reference and current limitations |
+| [docs/API.md](docs/API.md) | Every route, request examples, and important behavior |
